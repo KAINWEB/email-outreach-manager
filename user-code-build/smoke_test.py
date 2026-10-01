@@ -3,7 +3,7 @@ p=subprocess.Popen(["dist/EmailOutreachManager/EmailOutreachManager.exe"]);time.
 ok=False
 try:
  def get(path):
-  r=urllib.request.urlopen("http://127.0.0.1:8000"+path,timeout=5);return r.getcode(),r.read().decode("utf-8",errors="ignore")
+  r=urllib.request.urlopen("http://127.0.0.1:8765"+path,timeout=5);return r.getcode(),r.read().decode("utf-8",errors="ignore")
  h,b=get("/api/health"); root,html=get("/"); d,db=get("/api/dashboard"); s,sb=get("/api/senders"); c,cb=get("/api/campaigns"); r,rb=get("/api/recipients"); l,lb=get("/api/logs"); x,xb=get("/api/suppression")
  packaged=os.path.join("dist","EmailOutreachManager","_internal","frontend_dist","index.html")
  packaged_html=open(packaged,encoding="utf-8").read()
