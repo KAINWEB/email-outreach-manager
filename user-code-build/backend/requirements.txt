@@ -4,3 +4,7 @@ sqlalchemy
 pydantic
 pytest
 pyinstaller
+python-multipart
+openpyxl
+keyring
+email-validator
