@@ -49,6 +49,8 @@ jobs:
         id: backend_tests
         working-directory: backend
         shell: pwsh
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend
         run: |
           pytest -vv -s 2>&1 | Tee-Object -FilePath pytest-output.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
