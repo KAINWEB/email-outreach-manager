@@ -1,0 +1,58 @@
+name: Build Windows EXE
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install and build frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+      - name: Copy frontend into backend
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force backend/app/static | Out-Null
+          Copy-Item frontend/dist/* backend/app/static/ -Recurse -Force
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install backend and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pyinstaller
+      - name: Test
+        working-directory: backend
+        run: pytest -q
+      - name: Build EXE
+        working-directory: backend
+        run: pyinstaller --noconfirm --clean --name EmailOutreachManager --collect-all email_validator --collect-all uvicorn --add-data "app/static;app/static" desktop.py
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release/EmailOutreachManager/data/uploads | Out-Null
+          New-Item -ItemType Directory -Force release/EmailOutreachManager/data/exports | Out-Null
+          Copy-Item backend/dist/EmailOutreachManager/* release/EmailOutreachManager/ -Recurse -Force
+          Copy-Item backend/.env.example release/EmailOutreachManager/.env.example
+          Copy-Item WINDOWS_SETUP.md release/EmailOutreachManager/WINDOWS_SETUP.md
+          Compress-Archive -Path release/EmailOutreachManager -DestinationPath release/EmailOutreachManager-Windows-x64.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EmailOutreachManager-Windows-x64
+          path: release/EmailOutreachManager-Windows-x64.zip
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/EmailOutreachManager-Windows-x64.zip
