@@ -15,7 +15,7 @@ app = FastAPI(title="Email Outreach Manager MVP")
 def health_check():
     return {"status": "ok", "version": "1.0.0"}
 
-ui_path = os.path.join(BASE_DIR, "frontend_dist")
+ui_path = os.path.join(getattr(sys, "_MEIPASS", BASE_DIR), "frontend_dist")
 if os.path.exists(ui_path):
     assets = os.path.join(ui_path, "assets")
     if os.path.isdir(assets):
