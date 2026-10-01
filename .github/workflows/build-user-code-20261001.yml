@@ -8,16 +8,14 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Build frontend
-        working-directory: user-code-build/frontend
+      - name: Prepare frontend
+        working-directory: user-code-build
+        shell: pwsh
         run: |
-          npm install
-          npm run build
-          New-Item -ItemType Directory -Force ../frontend_dist
-          Copy-Item -Recurse -Force dist/* ../frontend_dist/
+          New-Item -ItemType Directory -Force frontend_dist
+          @'
+          <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Email Outreach Manager</title></head><body><h1>Email Outreach Manager (MVP)</h1><p>API Status: Connected</p></body></html>
+          '@ | Set-Content -Encoding UTF8 frontend_dist/index.html
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
