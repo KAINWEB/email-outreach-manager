@@ -1,0 +1,39 @@
+name: Build supplied code Windows EXE
+on:
+  push:
+    branches: [build-user-code-20261001]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Build frontend
+        working-directory: user-code-build/frontend
+        run: |
+          npm install
+          npm run build
+          New-Item -ItemType Directory -Force ../frontend_dist
+          Copy-Item -Recurse -Force dist/* ../frontend_dist/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build EXE
+        working-directory: user-code-build
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pyinstaller build.spec
+      - name: Smoke test
+        working-directory: user-code-build
+        run: python smoke_test.py
+      - name: Package
+        working-directory: user-code-build
+        run: Compress-Archive -Path dist\EmailOutreachManager\* -DestinationPath EmailOutreachManager-FROM-USER-CODE-Windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EmailOutreachManager-FROM-USER-CODE-Windows-x64
+          path: user-code-build/EmailOutreachManager-FROM-USER-CODE-Windows-x64.zip
