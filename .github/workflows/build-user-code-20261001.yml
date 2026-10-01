@@ -8,14 +8,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare frontend
-        working-directory: user-code-build
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force frontend_dist
-          @'
-          <!DOCTYPE html><html><head><meta charset="UTF-8"><title>Email Outreach Manager</title></head><body><h1>Email Outreach Manager (MVP)</h1><p>API Status: Connected</p></body></html>
-          '@ | Set-Content -Encoding UTF8 frontend_dist/index.html
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
