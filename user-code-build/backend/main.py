@@ -160,7 +160,7 @@ def worker():
 @app.on_event("startup")
 def startup():
     init(); threading.Thread(target=worker,daemon=True).start()
-    if getattr(sys,"frozen",False): threading.Thread(target=lambda:(time.sleep(1.2),webbrowser.open("http://127.0.0.1:8000")),daemon=True).start()
+    if getattr(sys,"frozen",False): threading.Thread(target=lambda:(time.sleep(1.2),webbrowser.open("http://127.0.0.1:8765")),daemon=True).start()
 @app.on_event("shutdown")
 def shutdown(): worker_stop.set()
 if os.path.isdir(UI):
@@ -171,4 +171,4 @@ if os.path.isdir(UI):
         f=os.path.join(UI,path)
         return FileResponse(f if path and os.path.isfile(f) else os.path.join(UI,"index.html"))
 if __name__=="__main__":
-    import uvicorn; uvicorn.run(app,host="127.0.0.1",port=8000)
+    import uvicorn; uvicorn.run(app,host="127.0.0.1",port=8765)
