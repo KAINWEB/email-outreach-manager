@@ -86,30 +86,94 @@ def campaigns(): return rows("SELECT c.*,COUNT(r.id) total,SUM(CASE WHEN r.statu
 @app.post("/api/campaigns")
 def campaign(x:CampaignIn):
     with con() as c: cur=c.execute("INSERT INTO campaigns(name,created_at) VALUES(?,?)",(x.name,datetime.now().isoformat(timespec="seconds"))); return {"id":cur.lastrowid}
-@app.post("/api/import/preview")
-async def preview(file:UploadFile=File(...)):
-    data=await file.read(); ext=(file.filename or "").lower()
+def parse_upload(data,filename):
+    ext=(filename or "").lower()
     if ext.endswith(".xlsx"):
-        wb=load_workbook(io.BytesIO(data),read_only=True,data_only=True); ws=wb.active; vals=list(ws.iter_rows(values_only=True)); headers=[str(x or "") for x in vals[0]]; sample=[dict(zip(headers,r)) for r in vals[1:6]]
-    else:
-        text=data.decode("utf-8-sig",errors="replace"); dialect=csv.Sniffer().sniff(text[:4096],delimiters=",;\t"); rr=list(csv.DictReader(io.StringIO(text),dialect=dialect)); headers=rr[0].keys() if rr else []; sample=rr[:5]
-    return {"headers":list(headers),"sample":sample}
-@app.post("/api/import/{cid}")
-async def do_import(cid:int,file:UploadFile=File(...),mapping:str="{}"):
-    mp=json.loads(mapping); data=await file.read(); ext=(file.filename or "").lower()
-    if ext.endswith(".xlsx"):
-        wb=load_workbook(io.BytesIO(data),read_only=True,data_only=True); ws=wb.active; vals=list(ws.iter_rows(values_only=True)); hs=[str(x or "") for x in vals[0]]; source=[dict(zip(hs,r)) for r in vals[1:]]
-    else:
-        text=data.decode("utf-8-sig",errors="replace"); dialect=csv.Sniffer().sniff(text[:4096],delimiters=",;\t"); source=list(csv.DictReader(io.StringIO(text),dialect=dialect))
-    added=skipped=0; seen=set()
+        wb=load_workbook(io.BytesIO(data),read_only=True,data_only=True); ws=wb.active
+        vals=list(ws.iter_rows(values_only=True))
+        if not vals:return [],[]
+        hs=[str(x or "").strip() for x in vals[0]]
+        return hs,[dict(zip(hs,r)) for r in vals[1:]]
+    text=data.decode("utf-8-sig",errors="replace")
+    try:dialect=csv.Sniffer().sniff(text[:8192],delimiters=",;\t")
+    except: dialect=csv.excel
+    rr=list(csv.DictReader(io.StringIO(text),dialect=dialect))
+    return (list(rr[0].keys()) if rr else []),rr
+
+def norm(s): return re.sub(r"[^a-zа-я0-9]+"," ",str(s or "").lower()).strip()
+def detect_columns(headers):
+    nh={h:norm(h) for h in headers}
+    def pick(exacts=(),contains=()):
+        for h,n in nh.items():
+            if n in exacts:return h
+        for h,n in nh.items():
+            if any(x in n for x in contains):return h
+        return ""
+    return {
+      "email":pick(("email","e mail","рабочий email контакт","личный email контакт"),("рабочий email","email контакт","электронная почта","e mail")),
+      "company":pick(("company","компания","название компания"),("название компания","company")),
+      "name":pick(("name","имя","полное имя контакт"),("полное имя","фио","contact name")),
+      "subject":pick(("subject","тема","тема письма"),("тема письма","email subject")),
+      "message":pick(("message","сообщение","текст письма","примечание к контакту"),("примечание к контакту","текст письма","сообщение")),
+      "deal":pick(("название сделка","deal"),("название сделка","сделк"))
+    }
+def make_subject(r,mp):
+    if mp.get("subject") and str(r.get(mp["subject"],"") or "").strip():return str(r.get(mp["subject"])).strip()
+    company=str(r.get(mp.get("company",""),"") or "").strip()
+    deal=str(r.get(mp.get("deal",""),"") or "").strip()
+    return ("Идея по развитию "+company) if company else (deal or "Предложение по развитию")
+def import_rows(cid,source,mp):
+    added=skipped=duplicates=invalid=0; seen=set()
     with con() as c:
         suppressed={x[0].lower() for x in c.execute("SELECT email FROM suppression")}
+        existing={x[0].lower() for x in c.execute("SELECT email FROM recipients WHERE campaign_id=?",(cid,))}
         for r in source:
-            get=lambda k:str(r.get(mp.get(k,k),"") or "").strip()
-            email=get("email").lower(); subject=get("subject"); message=get("message")
-            if not valid_email(email) or not subject or not message or email in seen or email in suppressed: skipped+=1; continue
-            seen.add(email); c.execute("INSERT INTO recipients(campaign_id,email,company,name,subject,message,status,created_at) VALUES(?,?,?,?,?,?,?,?)",(cid,email,get("company"),get("name"),subject,message,"READY",datetime.now().isoformat(timespec="seconds"))); added+=1
-    return {"added":added,"skipped":skipped}
+            get=lambda k:str(r.get(mp.get(k,""),"") or "").strip()
+            email=get("email").lower(); message=get("message"); subject=make_subject(r,mp)
+            if email in seen or email in existing: skipped+=1;duplicates+=1;continue
+            if not valid_email(email) or not message: skipped+=1;invalid+=1;continue
+            if email in suppressed: skipped+=1;continue
+            seen.add(email)
+            name=get("name"); name="" if norm(name) in ("нету","нет","none","nan") else name
+            c.execute("INSERT INTO recipients(campaign_id,email,company,name,subject,message,status,created_at) VALUES(?,?,?,?,?,?,?,?)",(cid,email,get("company"),name,subject,message,"READY",datetime.now().isoformat(timespec="seconds")));added+=1
+    return {"added":added,"skipped":skipped,"duplicates":duplicates,"invalid":invalid}
+
+@app.post("/api/import/auto")
+async def auto_import(file:UploadFile=File(...)):
+    data=await file.read(); hs,source=parse_upload(data,file.filename); mp=detect_columns(hs)
+    if not mp["email"] or not mp["message"]: raise HTTPException(400,detail={"message":"Не удалось автоматически найти email или текст письма","detected":mp,"headers":hs})
+    base=os.path.splitext(file.filename or "Импорт")[0]
+    with con() as c:
+        cur=c.execute("INSERT INTO campaigns(name,status,created_at) VALUES(?,?,?)",(base,"DRAFT",datetime.now().isoformat(timespec="seconds")));cid=cur.lastrowid
+    result=import_rows(cid,source,mp)
+    senders=rows("SELECT id,email,name,daily_limit,sent_today,rate_seconds,enabled FROM senders WHERE enabled=1 ORDER BY id")
+    capacity=sum(max(0,int(s["daily_limit"])-int(s["sent_today"])) for s in senders)
+    remaining=result["added"]; allocation=[]
+    for s in senders:
+        free=max(0,int(s["daily_limit"])-int(s["sent_today"])); take=min(free,remaining)
+        if take: allocation.append({"sender":s["email"],"count":take,"rate_seconds":s["rate_seconds"]});remaining-=take
+    return {"campaign_id":cid,"campaign":base,"detected":mp,**result,"active_senders":len(senders),"today_capacity":capacity,"planned_today":min(result["added"],capacity),"remaining_after_today":max(0,result["added"]-capacity),"allocation":allocation}
+
+@app.post("/api/import/preview")
+async def preview(file:UploadFile=File(...)):
+    data=await file.read();hs,source=parse_upload(data,file.filename);mp=detect_columns(hs)
+    return {"headers":hs,"sample":source[:5],"detected":mp}
+
+@app.post("/api/import/{cid}")
+async def do_import(cid:int,file:UploadFile=File(...),mapping:str="{}"):
+    data=await file.read();hs,source=parse_upload(data,file.filename); supplied=json.loads(mapping or "{}")
+    mp=detect_columns(hs);mp.update({k:v for k,v in supplied.items() if v})
+    return import_rows(cid,source,mp)
+
+@app.get("/api/campaigns/{cid}/plan")
+def campaign_plan(cid:int):
+    total=one("SELECT COUNT(*) n FROM recipients WHERE campaign_id=? AND status IN ('READY','QUEUED','FAILED')",(cid,))["n"]
+    ss=rows("SELECT email,daily_limit,sent_today,rate_seconds FROM senders WHERE enabled=1 ORDER BY sent_today,id")
+    left=total;alloc=[]
+    for s in ss:
+        free=max(0,int(s["daily_limit"])-int(s["sent_today"]));take=min(free,left)
+        if take:alloc.append({"sender":s["email"],"count":take,"rate_seconds":s["rate_seconds"]});left-=take
+    return {"total":total,"planned_today":total-left,"remaining_after_today":left,"allocation":alloc}
 @app.get("/api/recipients")
 def recipients(campaign_id:int=0,status:str=""):
     q="SELECT * FROM recipients WHERE 1=1"; p=[]
